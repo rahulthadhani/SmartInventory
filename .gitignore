@@ -1,0 +1,19 @@
+# Dataset files
+*.zip
+*.csv
+data/barcodes/
+
+# Database
+*.db
+
+# Virtual environment
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# OS files
+.DS_Store
+Thumbs.db
