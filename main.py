@@ -36,22 +36,25 @@ def prompt_update(product):
 
     if choice != "y":
         print("No changes made.")
-        return
-
-    print("\nEnter new values (press Enter to keep current value):")
-    updated_fields = {}
-
-    for field in ["brand", "product_name", "product_type", "size"]:
-        current = product.get(field) or ""
-        new_value = input(f"  {field} [{current}]: ").strip()
-        if new_value:
-            updated_fields[field] = new_value
-
-    if updated_fields:
-        update_product(product["barcode"], updated_fields)
-        print("Product updated successfully.")
     else:
-        print("No changes entered.")
+        print("\nEnter new values (press Enter to keep current value):")
+        updated_fields = {}
+
+        for field in ["brand", "product_name", "product_type", "size"]:
+            current = product.get(field) or ""
+            new_value = input(f"  {field} [{current}]: ").strip()
+            if new_value:
+                updated_fields[field] = new_value
+
+        if updated_fields:
+            update_product(product["barcode"], updated_fields)
+            print("Product updated successfully.")
+        else:
+            print("No changes entered.")
+
+    # Refocus the OpenCV window after terminal input
+    print("\nClick on the camera window and press 'S' to scan or 'Q' to quit.")
+    cv2.waitKey(1)
 
 
 def prompt_manual_entry(barcode):
@@ -184,6 +187,10 @@ def run_ocr_pipeline(cap, barcode_value):
         print("Switching to manual entry.")
         product_data = prompt_manual_entry(barcode_value)
         _confirm_and_save(product_data)
+
+    # Refocus the OpenCV window after terminal input
+    print("\nClick on the camera window and press 'S' to scan or 'Q' to quit.")
+    cv2.waitKey(1)  # ← last line of this function
 
 
 def _confirm_and_save(product_data):

@@ -70,13 +70,28 @@ def preprocess_for_barcode(frame):
 
 def preprocess_for_ocr(frame):
     """
-    Full preprocessing pipeline tuned for OCR text extraction.
-    OCR works better with clear contrast but doesn't need
-    full thresholding — grayscale + contrast is usually enough.
+    Improved preprocessing pipeline for OCR text extraction.
+    Steps:
+    - Upscale the image so text is larger and easier to read
+    - Convert to grayscale
+    - Sharpen edges to make text crisper
+    - Boost contrast with CLAHE
     Returns the processed image as a NumPy array.
     """
-    gray = to_grayscale(frame)
-    contrasted = increase_contrast(gray)
+    # Upscale by 2x — small text becomes much more readable
+    upscaled = cv2.resize(frame, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+
+    # Convert to grayscale
+    gray = to_grayscale(upscaled)
+
+    # Sharpen using an unsharp mask kernel
+    # This makes text edges crisper for EasyOCR to read
+    sharpen_kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
+    sharpened = cv2.filter2D(gray, -1, sharpen_kernel)
+
+    # Boost contrast
+    contrasted = increase_contrast(sharpened)
+
     return contrasted
 
 
