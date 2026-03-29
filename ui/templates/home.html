@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% set active = "home" %}
+{% block content %}
+<div class="container">
+  <div class="app-header">
+    <div class="logo">Smart<span>Inventory</span></div>
+    <a href="/inventory" class="icon-btn">
+      <svg viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+    </a>
+  </div>
+
+  <div class="hero-card">
+    <div style="font-size:11px;font-weight:500;color:var(--accent);letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;font-family:'DM Mono',monospace">AI-Powered Scanning</div>
+    <div style="font-size:24px;font-weight:700;line-height:1.2;margin-bottom:6px">Scan. Identify.<br><span style="color:var(--accent)">Catalog.</span></div>
+    <div style="font-size:13px;color:var(--text2);line-height:1.5;margin-bottom:20px">Point your camera at any product barcode to instantly generate a complete catalog entry.</div>
+    <a href="/scan" style="width:100%;padding:14px;background:var(--accent);color:#0A0B0F;border:none;border-radius:12px;font-family:'Syne',sans-serif;font-size:15px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:8px;text-decoration:none;transition:all .15s">
+      <svg viewBox="0 0 24 24" style="width:18px;height:18px;stroke:#0A0B0F;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round"><path d="M3 9V5a2 2 0 0 1 2-2h4"/><path d="M15 3h4a2 2 0 0 1 2 2v4"/><path d="M3 15v4a2 2 0 0 1 2 2h4"/><path d="M15 21h4a2 2 0 0 1 2-2v-4"/><line x1="7" y1="12" x2="17" y2="12"/></svg>
+      Scan Product
+    </a>
+  </div>
+
+  <div class="stats-row">
+    <div class="stat-card s1">
+      <div class="stat-val">{{ total }}</div>
+      <div class="stat-label">Products</div>
+    </div>
+    <div class="stat-card s2">
+      <div class="stat-val">{{ today }}</div>
+      <div class="stat-label">Today</div>
+    </div>
+    <div class="stat-card s3">
+      <div class="stat-val">{{ recent | length }}</div>
+      <div class="stat-label">Recent</div>
+    </div>
+  </div>
+
+  <div class="section-header">
+    <div class="section-title">Recent scans</div>
+    <a href="/inventory" class="see-all">see all</a>
+  </div>
+
+  {% for product in recent %}
+  <a href="/review/{{ product.barcode }}" class="recent-item">
+    <div class="product-thumb">📦</div>
+    <div class="recent-info">
+      <div class="recent-name">{{ product.product_name or 'Unknown Product' }}</div>
+      <div class="recent-meta">{{ product.barcode }} · {{ product.timestamp[:10] }}</div>
+    </div>
+    <div class="badge badge-ok">saved</div>
+  </a>
+  {% else %}
+  <div style="text-align:center;padding:24px;color:var(--text2);font-size:13px">
+    No products scanned yet. <a href="/scan" style="color:var(--accent)">Scan your first product.</a>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

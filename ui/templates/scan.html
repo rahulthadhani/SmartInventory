@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+{% set active = "scan" %}
+{% block content %}
+<div class="container">
+  <div class="app-header">
+    <div style="font-size:16px;font-weight:600">Scan Product</div>
+  </div>
+
+  <div class="mode-tabs">
+    <button class="mode-tab active" id="tab-barcode" onclick="setMode('barcode')">Barcode</button>
+    <button class="mode-tab" id="tab-ocr" onclick="setMode('ocr')">OCR Text</button>
+  </div>
+
+  <div class="camera-viewport">
+    <img src="/video_feed" id="camera-feed" alt="Camera feed">
+    <div class="scan-overlay">
+      <div class="scan-frame">
+        <div class="corner-tr"></div>
+        <div class="corner-bl"></div>
+        <div class="scan-line" id="scan-line"></div>
+      </div>
+      <div class="scan-label" id="scan-label">Align barcode within frame</div>
+    </div>
+  </div>
+
+  <div class="pipeline" id="pipeline">
+    <div class="pip-step"><div class="pip-dot done" id="pip-camera"></div><div class="pip-label done">Camera</div></div>
+    <div class="pip-connector" id="conn-1"></div>
+    <div class="pip-step"><div class="pip-dot" id="pip-detect"></div><div class="pip-label" id="pip-detect-lbl">Detect</div></div>
+    <div class="pip-connector" id="conn-2"></div>
+    <div class="pip-step"><div class="pip-dot" id="pip-ocr"></div><div class="pip-label" id="pip-ocr-lbl">OCR</div></div>
+    <div class="pip-connector" id="conn-3"></div>
+    <div class="pip-step"><div class="pip-dot" id="pip-llm"></div><div class="pip-label" id="pip-llm-lbl">LLM</div></div>
+    <div class="pip-connector" id="conn-4"></div>
+    <div class="pip-step"><div class="pip-dot" id="pip-store"></div><div class="pip-label" id="pip-store-lbl">Store</div></div>
+  </div>
+
+  <div id="status-area"></div>
+
+  <div style="display:flex;justify-content:center;padding:8px 0">
+    <div class="capture-btn" id="capture-btn" onclick="captureFrame()">
+      <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+    </div>
+  </div>
+
+  <!-- Result panel — hidden until scan completes -->
+  <div id="result-panel" style="display:none">
+    <div class="card" id="result-card"></div>
+    <div class="btn-row">
+      <button class="btn btn-secondary" onclick="resetScan()">Re-scan</button>
+      <button class="btn btn-primary" id="save-btn" onclick="saveProduct()">Save to DB</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  let currentMode = "barcode";
+  let pendingProduct = null;
+  let scanning = false;
+
+  function setMode(mode) {
+    currentMode = mode;
+    document.querySelectorAll('.mode-tab').forEach(t => t.classList.remove('active'));
+    document.getElementById('tab-' + mode).classList.add('active');
+    document.getElementById('scan-label').textContent =
+      mode === 'barcode' ? 'Align barcode within frame' : 'Show product front to camera';
+  }
+
+  function setPipeline(steps) {
+    const ids = ['detect', 'ocr', 'llm', 'store'];
+    const connIds = ['conn-1', 'conn-2', 'conn-3', 'conn-4'];
+    ids.forEach((id, i) => {
+      const dot = document.getElementById('pip-' + id);
+      const lbl = document.getElementById('pip-' + id + '-lbl');
+      const conn = document.getElementById(connIds[i]);
+      dot.className = 'pip-dot ' + (steps[i] || '');
+      lbl.className = 'pip-label ' + (steps[i] || '');
+      if (conn) conn.className = 'pip-connector ' + (steps[i] === 'done' ? 'done' : '');
+    });
+  }
+
+  function setStatus(msg, type = 'info') {
+    document.getElementById('status-area').innerHTML =
+      `<div class="status-msg status-${type}">${msg}</div>`;
+  }
+
+  async function captureFrame() {
+    if (scanning) return;
+    scanning = true;
+
+    document.getElementById('result-panel').style.display = 'none';
+    setPipeline(['active', '', '', '']);
+    setStatus('Scanning for barcode...', 'info');
+
+    const res = await fetch('/api/capture', { method: 'POST' });
+    const data = await res.json();
+
+    if (!data.found) {
+      setPipeline(['', '', '', '']);
+      setStatus('No barcode detected. Adjust angle and try again.', 'error');
+      scanning = false;
+      return;
+    }
+
+    setPipeline(['done', '', '', '']);
+    setStatus(`Barcode detected: ${data.barcode}`, 'success');
+
+    if (data.in_database) {
+      // Product exists — show it and offer update
+      setPipeline(['done', 'done', 'done', 'done']);
+      showExistingProduct(data.product);
+    } else {
+      // New product — run OCR + LLM
+      await runOcrPipeline(data.barcode);
+    }
+
+    scanning = false;
+  }
+
+  async function runOcrPipeline(barcode) {
+    setPipeline(['done', 'active', '', '']);
+    setStatus('Running OCR on packaging...', 'info');
+
+    const res = await fetch('/api/ocr', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ barcode })
+    });
+    const data = await res.json();
+
+    if (!data.success) {
+      setPipeline(['done', '', '', '']);
+      setStatus(data.message, 'error');
+      return;
+    }
+
+    setPipeline(['done', 'done', 'done', '']);
+    setStatus('LLM description generated.', 'success');
+
+    pendingProduct = data.product;
+    showNewProduct(data.product, data.validations, data.ocr_text);
+  }
+
+  function showExistingProduct(product) {
+    document.getElementById('result-card').innerHTML = `
+      <div style="font-size:11px;color:var(--accent);font-family:'DM Mono',monospace;margin-bottom:8px">FOUND IN DATABASE</div>
+      <div style="font-size:17px;font-weight:700;margin-bottom:4px">${product.product_name || 'Unknown'}</div>
+      <div style="font-size:12px;color:var(--accent);font-family:'DM Mono',monospace;margin-bottom:12px">${product.brand || ''}</div>
+      <div class="attr-grid">
+        <div class="attr-item"><div class="attr-label">Barcode</div><div class="attr-val" style="font-size:11px">${product.barcode}</div></div>
+        <div class="attr-item"><div class="attr-label">Type</div><div class="attr-val">${product.product_type || 'N/A'}</div></div>
+        <div class="attr-item"><div class="attr-label">Size</div><div class="attr-val">${product.size || 'N/A'}</div></div>
+        <div class="attr-item"><div class="attr-label">Saved</div><div class="attr-val" style="font-size:11px">${product.timestamp?.slice(0,10) || 'N/A'}</div></div>
+      </div>
+      ${product.description ? `<div class="ai-desc-card"><div class="ai-badge">Description</div><div class="ai-text">${product.description}</div></div>` : ''}
+    `;
+    document.getElementById('save-btn').textContent = 'Update';
+    document.getElementById('save-btn').onclick = () => window.location.href = '/review/' + product.barcode;
+    document.getElementById('result-panel').style.display = 'block';
+  }
+
+  function showNewProduct(product, validations, ocrText) {
+    const checks = [
+      { key: 'barcode_format', label: 'Barcode format valid' },
+      { key: 'required_fields', label: 'Required fields present' },
+      { key: 'duplicate_check', label: 'No duplicate record' },
+      { key: 'description_quality', label: 'Description quality' }
+    ];
+
+    const checksHtml = checks.map(c => `
+      <div class="val-check">
+        <div class="check-dot ${validations[c.key]?.passed ? 'dot-ok' : 'dot-warn'}">
+          ${validations[c.key]?.passed ? '✓' : '!'}
+        </div>
+        ${c.label} — ${validations[c.key]?.message || ''}
+      </div>
+    `).join('');
+
+    document.getElementById('result-card').innerHTML = `
+      <div style="font-size:11px;color:var(--accent2);font-family:'DM Mono',monospace;margin-bottom:8px">NEW PRODUCT</div>
+      <div style="font-size:17px;font-weight:700;margin-bottom:4px">${product.product_name || 'Unknown'}</div>
+      <div style="font-size:12px;color:var(--accent);font-family:'DM Mono',monospace;margin-bottom:12px">${product.brand || ''}</div>
+      <div class="attr-grid">
+        <div class="attr-item"><div class="attr-label">Barcode</div><div class="attr-val" style="font-size:11px">${product.barcode}</div></div>
+        <div class="attr-item"><div class="attr-label">Type</div><div class="attr-val">${product.product_type || 'N/A'}</div></div>
+        <div class="attr-item"><div class="attr-label">Size</div><div class="attr-val">${product.size || 'N/A'}</div></div>
+        <div class="attr-item"><div class="attr-label">Source</div><div class="attr-val" style="color:var(--accent2)">OCR + LLM</div></div>
+      </div>
+      <div class="ai-desc-card">
+        <div class="ai-badge">LLM Generated</div>
+        <div class="ai-text">${product.description || 'No description generated.'}</div>
+      </div>
+      <div class="val-card">
+        <div class="val-title">Validation checks</div>
+        ${checksHtml}
+      </div>
+    `;
+
+    document.getElementById('save-btn').textContent = 'Save to DB';
+    document.getElementById('save-btn').onclick = saveProduct;
+    document.getElementById('result-panel').style.display = 'block';
+  }
+
+  async function saveProduct() {
+    if (!pendingProduct) return;
+
+    const res = await fetch('/api/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(pendingProduct)
+    });
+    const data = await res.json();
+
+    if (data.success) {
+      setPipeline(['done', 'done', 'done', 'done']);
+      setStatus('Product saved successfully!', 'success');
+      showToast('Product saved!');
+      document.getElementById('save-btn').disabled = true;
+      document.getElementById('save-btn').textContent = 'Saved';
+      pendingProduct = null;
+    } else {
+      setStatus(data.error || 'Failed to save product.', 'error');
+    }
+  }
+
+  function resetScan() {
+    pendingProduct = null;
+    scanning = false;
+    setPipeline(['', '', '', '']);
+    document.getElementById('status-area').innerHTML = '';
+    document.getElementById('result-panel').style.display = 'none';
+  }
+</script>
+{% endblock %}

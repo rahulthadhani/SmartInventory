@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>SmartInventory</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="status-bar">
+    <span id="clock" style="font-weight:500;font-family:'DM Mono',monospace"></span>
+    <div style="display:flex;gap:8px;align-items:center;font-family:'DM Mono',monospace;font-size:11px;color:var(--text2)">
+      <span>5G</span>
+    </div>
+  </div>
+
+  {% block content %}{% endblock %}
+
+  <nav class="bottom-nav">
+    <a href="/" class="nav-item {% if active == 'home' %}active{% endif %}">
+      <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      Home
+    </a>
+    <a href="/scan" class="nav-item {% if active == 'scan' %}active{% endif %}">
+      <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+      Scan
+    </a>
+    <a href="/inventory" class="nav-item {% if active == 'inventory' %}active{% endif %}">
+      <svg viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+      Inventory
+    </a>
+  </nav>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    function updateClock() {
+      const now = new Date();
+      document.getElementById('clock').textContent =
+        now.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+    }
+    updateClock();
+    setInterval(updateClock, 1000);
+
+    function showToast(msg, duration = 2500) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), duration);
+    }
+  </script>
+</body>
+</html>
