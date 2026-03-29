@@ -4,6 +4,7 @@
 data/barcodes/
 
 # Database
+smartinventory.db
 *.db
 
 # Virtual environment
@@ -17,3 +18,6 @@ __pycache__/
 # OS files
 .DS_Store
 Thumbs.dbconfig.py
+
+config.py
+data/
