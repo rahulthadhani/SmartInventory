@@ -86,6 +86,13 @@ def review(barcode):
     )
 
 
+@app.route("/api/lookup/<barcode>")
+def lookup_barcode(barcode):
+    """Looks up a single barcode in the database and returns the result."""
+    existing = find_product_by_barcode(barcode.strip())
+    return jsonify({"in_database": existing is not None, "product": existing})
+
+
 # ── API Endpoints ─────────────────────────────────────────────────────────────
 
 
@@ -93,7 +100,7 @@ def review(barcode):
 def capture():
     """
     Captures a frame from the camera, runs barcode detection,
-    and returns the result as JSON.
+    and returns all detected barcodes for the user to choose from.
     """
     with camera_lock:
         cap = get_camera()
@@ -108,19 +115,33 @@ def capture():
         processed = preprocess_for_barcode(frame)
         results = scan_barcode(processed)
 
-    if results:
+    if not results:
+        return jsonify({"found": False})
+
+    if len(results) == 1:
+        # Only one barcode found — proceed automatically
         barcode_value = results[0]["value"].strip()
         existing = find_product_by_barcode(barcode_value)
         return jsonify(
             {
                 "found": True,
+                "multiple": False,
                 "barcode": barcode_value,
                 "in_database": existing is not None,
                 "product": existing,
             }
         )
 
-    return jsonify({"found": False})
+    # Multiple barcodes found — return all for user to choose
+    barcodes = []
+    for r in results:
+        value = r["value"].strip()
+        existing = find_product_by_barcode(value)
+        barcodes.append(
+            {"value": value, "type": r["type"], "in_database": existing is not None}
+        )
+
+    return jsonify({"found": True, "multiple": True, "barcodes": barcodes})
 
 
 @app.route("/api/ocr", methods=["POST"])

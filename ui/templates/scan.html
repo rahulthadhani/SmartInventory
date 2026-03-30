@@ -98,24 +98,94 @@
     if (!data.found) {
       setPipeline(['', '', '', '']);
       setStatus('No barcode detected. Adjust angle and try again.', 'error');
-      scanning = false;
-      return;
-    }
+     scanning = false;
+     return;
+   }
 
-    setPipeline(['done', '', '', '']);
-    setStatus(`Barcode detected: ${data.barcode}`, 'success');
+    // Multiple barcodes found — ask user to pick one
+    if (data.multiple) {
+     setPipeline(['done', '', '', '']);
+     setStatus(`${data.barcodes.length} barcodes detected. Please select the correct one.`, 'info');
+     showBarcodeSelector(data.barcodes);
+     scanning = false;
+     return;
+   }
+
+    // Single barcode — proceed automatically
+   setPipeline(['done', '', '', '']);
+   setStatus(`Barcode detected: ${data.barcode}`, 'success'); 
 
     if (data.in_database) {
-      // Product exists — show it and offer update
-      setPipeline(['done', 'done', 'done', 'done']);
-      showExistingProduct(data.product);
-    } else {
-      // New product — run OCR + LLM
-      await runOcrPipeline(data.barcode);
-    }
+     setPipeline(['done', 'done', 'done', 'done']);
+     showExistingProduct(data.product);
+   } else {
+     await runOcrPipeline(data.barcode);
+   }  
 
     scanning = false;
   }
+
+  function showBarcodeSelector(barcodes) {
+  const items = barcodes.map((b, i) => `
+    <div onclick="selectBarcode('${b.value}')"
+         style="display:flex;align-items:center;justify-content:space-between;
+                padding:12px;background:var(--surface2);border:1px solid var(--border2);
+                border-radius:10px;cursor:pointer;margin-bottom:8px;transition:all .15s"
+         onmouseover="this.style.borderColor='var(--accent)'"
+         onmouseout="this.style.borderColor='var(--border2)'">
+      <div>
+        <div style="font-size:13px;font-weight:600;font-family:'DM Mono',monospace;
+                    color:var(--accent);margin-bottom:3px">${b.value}</div>
+        <div style="font-size:11px;color:var(--text2)">
+          Type: ${b.type}
+          ${b.in_database
+            ? '<span style="color:var(--accent);margin-left:8px">● In database</span>'
+            : '<span style="color:var(--text3);margin-left:8px">● New product</span>'}
+        </div>
+      </div>
+      <svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:var(--text2);
+           fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round">
+        <polyline points="9 18 15 12 9 6"/>
+      </svg>
+    </div>
+  `).join('');
+
+  document.getElementById('result-card').innerHTML = `
+    <div style="font-size:11px;color:var(--accent2);font-family:'DM Mono',monospace;
+                margin-bottom:12px">MULTIPLE BARCODES DETECTED</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:14px">
+      Select the barcode that belongs to this product:
+    </div>
+    ${items}
+    <button class="btn btn-secondary" style="width:100%;margin-top:8px"
+            onclick="resetScan()">Cancel</button>
+  `;
+
+  document.getElementById('save-btn').style.display = 'none';
+  document.getElementById('result-panel').style.display = 'block';
+}
+
+async function selectBarcode(barcodeValue) {
+  document.getElementById('result-panel').style.display = 'none';
+  document.getElementById('save-btn').style.display = 'block';
+
+  setPipeline(['done', '', '', '']);
+  setStatus(`Selected: ${barcodeValue}`, 'success');
+
+  scanning = true;
+
+  const existing = await fetch('/api/lookup/' + barcodeValue);
+  const data = await existing.json();
+
+  if (data.in_database) {
+    setPipeline(['done', 'done', 'done', 'done']);
+    showExistingProduct(data.product);
+  } else {
+    await runOcrPipeline(barcodeValue);
+  }
+
+  scanning = false;
+}
 
   async function runOcrPipeline(barcode) {
     setPipeline(['done', 'active', '', '']);
