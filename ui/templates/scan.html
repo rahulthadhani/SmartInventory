@@ -8,21 +8,99 @@
 
   <div class="mode-tabs">
     <button class="mode-tab active" id="tab-barcode" onclick="setMode('barcode')">Barcode</button>
+    <button class="mode-tab" id="tab-upload" onclick="setMode('upload')">Upload Image</button>
     <button class="mode-tab" id="tab-ocr" onclick="setMode('ocr')">OCR Text</button>
   </div>
 
-  <div class="camera-viewport">
-    <img src="/video_feed" id="camera-feed" alt="Camera feed">
-    <div class="scan-overlay">
-      <div class="scan-frame">
-        <div class="corner-tr"></div>
-        <div class="corner-bl"></div>
-        <div class="scan-line" id="scan-line"></div>
+  <!-- BARCODE MODE — live camera -->
+  <div id="mode-barcode">
+    <div class="camera-viewport">
+      <img src="/video_feed" id="camera-feed" alt="Camera feed">
+      <div class="scan-overlay">
+        <div class="scan-frame">
+          <div class="corner-tr"></div>
+          <div class="corner-bl"></div>
+          <div class="scan-line" id="scan-line"></div>
+        </div>
+        <div class="scan-label" id="scan-label">Align barcode within frame</div>
       </div>
-      <div class="scan-label" id="scan-label">Align barcode within frame</div>
+    </div>
+    <div style="display:flex;justify-content:center;padding:8px 0 16px">
+      <div class="capture-btn" id="capture-btn" onclick="captureFrame()">
+        <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+      </div>
     </div>
   </div>
 
+  <!-- UPLOAD MODE — image file upload -->
+  <div id="mode-upload" style="display:none">
+
+    <!-- Drop Zone -->
+    <div id="drop-zone"
+         style="border:2px dashed var(--border2);border-radius:var(--r2);
+                padding:40px 20px;text-align:center;cursor:pointer;
+                margin-bottom:16px;transition:all .2s;background:var(--surface)"
+         onclick="document.getElementById('file-input').click()"
+         ondragover="onDragOver(event)"
+         ondragleave="onDragLeave(event)"
+         ondrop="onDrop(event)">
+      <input type="file" id="file-input" accept="image/*"
+             style="display:none" onchange="onFileSelected(event)">
+      <div id="drop-placeholder">
+        <svg viewBox="0 0 24 24" style="width:40px;height:40px;stroke:var(--text2);
+             fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;
+             margin-bottom:12px">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:6px">
+          Drop image here or tap to browse
+        </div>
+        <div style="font-size:12px;color:var(--text2)">
+          Supports JPG, PNG, WEBP
+        </div>
+      </div>
+      <div id="drop-preview" style="display:none">
+        <img id="preview-img" style="max-width:100%;max-height:250px;
+             border-radius:12px;object-fit:contain">
+        <div style="font-size:12px;color:var(--text2);margin-top:8px"
+             id="preview-filename"></div>
+      </div>
+    </div>
+
+    <!-- Upload action buttons -->
+    <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px">
+      <button class="btn btn-primary" id="upload-scan-btn"
+              onclick="uploadScan()" style="display:none">
+        Scan Barcode from Image
+      </button>
+      <button class="btn btn-secondary" id="upload-ocr-btn"
+              onclick="uploadOcr()" style="display:none">
+        Run OCR + Generate Description
+      </button>
+      <button class="btn btn-secondary" onclick="resetUpload()"
+              id="reset-upload-btn" style="display:none">
+        Choose Different Image
+      </button>
+    </div>
+  </div>
+
+  <!-- OCR TEXT MODE -->
+  <div id="mode-ocr" style="display:none">
+    <div class="camera-viewport">
+      <img src="/video_feed" alt="Camera feed">
+      <div class="scan-overlay">
+        <div class="scan-frame">
+          <div class="corner-tr"></div>
+          <div class="corner-bl"></div>
+        </div>
+        <div class="scan-label">Show product front to camera</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pipeline -->
   <div class="pipeline" id="pipeline">
     <div class="pip-step"><div class="pip-dot done" id="pip-camera"></div><div class="pip-label done">Camera</div></div>
     <div class="pip-connector" id="conn-1"></div>
@@ -37,13 +115,7 @@
 
   <div id="status-area"></div>
 
-  <div style="display:flex;justify-content:center;padding:8px 0">
-    <div class="capture-btn" id="capture-btn" onclick="captureFrame()">
-      <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-    </div>
-  </div>
-
-  <!-- Result panel — hidden until scan completes -->
+  <!-- Result panel -->
   <div id="result-panel" style="display:none">
     <div class="card" id="result-card"></div>
     <div class="btn-row">
@@ -57,14 +129,20 @@
   let currentMode = "barcode";
   let pendingProduct = null;
   let scanning = false;
+  let uploadedFile = null;
+  let detectedBarcode = null;
 
   function setMode(mode) {
     currentMode = mode;
     document.querySelectorAll('.mode-tab').forEach(t => t.classList.remove('active'));
     document.getElementById('tab-' + mode).classList.add('active');
-    document.getElementById('scan-label').textContent =
-      mode === 'barcode' ? 'Align barcode within frame' : 'Show product front to camera';
+    document.getElementById('mode-barcode').style.display = mode === 'barcode' ? 'block' : 'none';
+    document.getElementById('mode-upload').style.display = mode === 'upload' ? 'block' : 'none';
+    document.getElementById('mode-ocr').style.display = mode === 'ocr' ? 'block' : 'none';
+    resetScan();
   }
+
+  // ── Pipeline helpers ───────────────────────────────────────────────────────
 
   function setPipeline(steps) {
     const ids = ['detect', 'ocr', 'llm', 'store'];
@@ -84,6 +162,8 @@
       `<div class="status-msg status-${type}">${msg}</div>`;
   }
 
+  // ── Live camera capture ────────────────────────────────────────────────────
+
   async function captureFrame() {
     if (scanning) return;
     scanning = true;
@@ -98,94 +178,28 @@
     if (!data.found) {
       setPipeline(['', '', '', '']);
       setStatus('No barcode detected. Adjust angle and try again.', 'error');
-     scanning = false;
-     return;
-   }
+      scanning = false;
+      return;
+    }
 
-    // Multiple barcodes found — ask user to pick one
+    setPipeline(['done', '', '', '']);
+    setStatus(`Barcode detected: ${data.barcode}`, 'success');
+
     if (data.multiple) {
-     setPipeline(['done', '', '', '']);
-     setStatus(`${data.barcodes.length} barcodes detected. Please select the correct one.`, 'info');
-     showBarcodeSelector(data.barcodes);
-     scanning = false;
-     return;
-   }
-
-    // Single barcode — proceed automatically
-   setPipeline(['done', '', '', '']);
-   setStatus(`Barcode detected: ${data.barcode}`, 'success'); 
+      showBarcodeSelector(data.barcodes);
+      scanning = false;
+      return;
+    }
 
     if (data.in_database) {
-     setPipeline(['done', 'done', 'done', 'done']);
-     showExistingProduct(data.product);
-   } else {
-     await runOcrPipeline(data.barcode);
-   }  
+      setPipeline(['done', 'done', 'done', 'done']);
+      showExistingProduct(data.product);
+    } else {
+      await runOcrPipeline(data.barcode);
+    }
 
     scanning = false;
   }
-
-  function showBarcodeSelector(barcodes) {
-  const items = barcodes.map((b, i) => `
-    <div onclick="selectBarcode('${b.value}')"
-         style="display:flex;align-items:center;justify-content:space-between;
-                padding:12px;background:var(--surface2);border:1px solid var(--border2);
-                border-radius:10px;cursor:pointer;margin-bottom:8px;transition:all .15s"
-         onmouseover="this.style.borderColor='var(--accent)'"
-         onmouseout="this.style.borderColor='var(--border2)'">
-      <div>
-        <div style="font-size:13px;font-weight:600;font-family:'DM Mono',monospace;
-                    color:var(--accent);margin-bottom:3px">${b.value}</div>
-        <div style="font-size:11px;color:var(--text2)">
-          Type: ${b.type}
-          ${b.in_database
-            ? '<span style="color:var(--accent);margin-left:8px">● In database</span>'
-            : '<span style="color:var(--text3);margin-left:8px">● New product</span>'}
-        </div>
-      </div>
-      <svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:var(--text2);
-           fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round">
-        <polyline points="9 18 15 12 9 6"/>
-      </svg>
-    </div>
-  `).join('');
-
-  document.getElementById('result-card').innerHTML = `
-    <div style="font-size:11px;color:var(--accent2);font-family:'DM Mono',monospace;
-                margin-bottom:12px">MULTIPLE BARCODES DETECTED</div>
-    <div style="font-size:13px;color:var(--text2);margin-bottom:14px">
-      Select the barcode that belongs to this product:
-    </div>
-    ${items}
-    <button class="btn btn-secondary" style="width:100%;margin-top:8px"
-            onclick="resetScan()">Cancel</button>
-  `;
-
-  document.getElementById('save-btn').style.display = 'none';
-  document.getElementById('result-panel').style.display = 'block';
-}
-
-async function selectBarcode(barcodeValue) {
-  document.getElementById('result-panel').style.display = 'none';
-  document.getElementById('save-btn').style.display = 'block';
-
-  setPipeline(['done', '', '', '']);
-  setStatus(`Selected: ${barcodeValue}`, 'success');
-
-  scanning = true;
-
-  const existing = await fetch('/api/lookup/' + barcodeValue);
-  const data = await existing.json();
-
-  if (data.in_database) {
-    setPipeline(['done', 'done', 'done', 'done']);
-    showExistingProduct(data.product);
-  } else {
-    await runOcrPipeline(barcodeValue);
-  }
-
-  scanning = false;
-}
 
   async function runOcrPipeline(barcode) {
     setPipeline(['done', 'active', '', '']);
@@ -206,35 +220,263 @@ async function selectBarcode(barcodeValue) {
 
     setPipeline(['done', 'done', 'done', '']);
     setStatus('LLM description generated.', 'success');
-
     pendingProduct = data.product;
     showNewProduct(data.product, data.validations, data.ocr_text);
   }
 
+  // ── Image upload flow ──────────────────────────────────────────────────────
+
+  function onDragOver(e) {
+    e.preventDefault();
+    document.getElementById('drop-zone').style.borderColor = 'var(--accent)';
+    document.getElementById('drop-zone').style.background = 'var(--surface2)';
+  }
+
+  function onDragLeave(e) {
+    document.getElementById('drop-zone').style.borderColor = 'var(--border2)';
+    document.getElementById('drop-zone').style.background = 'var(--surface)';
+  }
+
+  function onDrop(e) {
+    e.preventDefault();
+    onDragLeave(e);
+    const file = e.dataTransfer.files[0];
+    if (file && file.type.startsWith('image/')) {
+      loadImageFile(file);
+    }
+  }
+
+  function onFileSelected(e) {
+    const file = e.target.files[0];
+    if (file) loadImageFile(file);
+  }
+
+  function loadImageFile(file) {
+    uploadedFile = file;
+    detectedBarcode = null;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      document.getElementById('preview-img').src = e.target.result;
+      document.getElementById('preview-filename').textContent = file.name;
+      document.getElementById('drop-placeholder').style.display = 'none';
+      document.getElementById('drop-preview').style.display = 'block';
+      document.getElementById('upload-scan-btn').style.display = 'block';
+      document.getElementById('upload-ocr-btn').style.display = 'none';
+      document.getElementById('reset-upload-btn').style.display = 'block';
+    };
+    reader.readAsDataURL(file);
+
+    document.getElementById('result-panel').style.display = 'none';
+    setPipeline(['', '', '', '']);
+    document.getElementById('status-area').innerHTML = '';
+  }
+
+  async function uploadScan() {
+    if (!uploadedFile) return;
+
+    setPipeline(['active', '', '', '']);
+    setStatus('Scanning uploaded image for barcode...', 'info');
+
+    const formData = new FormData();
+    formData.append('image', uploadedFile);
+
+    try {
+      const res = await fetch('/api/upload_scan', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+
+      if (!data.found) {
+        setPipeline(['', '', '', '']);
+        setStatus(data.message || 'No barcode detected. Try a clearer image.', 'error');
+        return;
+      }
+
+      setPipeline(['done', '', '', '']);
+
+      if (data.multiple) {
+        setStatus(`${data.barcodes.length} barcodes found. Select the correct one.`, 'info');
+        showBarcodeSelector(data.barcodes);
+        return;
+      }
+
+      detectedBarcode = data.barcode;
+      setStatus(`Barcode detected: ${data.barcode}`, 'success');
+
+      if (data.in_database) {
+        setPipeline(['done', 'done', 'done', 'done']);
+        showExistingProduct(data.product);
+      } else {
+        setStatus(`Barcode ${data.barcode} found. Now run OCR to generate description.`, 'success');
+        document.getElementById('upload-ocr-btn').style.display = 'block';
+      }
+
+    } catch (err) {
+      setPipeline(['', '', '', '']);
+      setStatus(`Error: ${err.message}`, 'error');
+    }
+  }
+
+  async function uploadOcr() {
+    if (!uploadedFile || !detectedBarcode) return;
+
+    setPipeline(['done', 'active', '', '']);
+    setStatus('Running OCR on uploaded image...', 'info');
+    document.getElementById('upload-ocr-btn').disabled = true;
+
+    const formData = new FormData();
+    formData.append('image', uploadedFile);
+    formData.append('barcode', detectedBarcode);
+
+    try {
+      const res = await fetch('/api/upload_ocr', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+
+      if (!data.success) {
+        setPipeline(['done', '', '', '']);
+        setStatus(data.message || 'OCR failed.', 'error');
+        document.getElementById('upload-ocr-btn').disabled = false;
+        return;
+      }
+
+      setPipeline(['done', 'done', 'done', '']);
+      setStatus('Description generated successfully.', 'success');
+      pendingProduct = data.product;
+      showNewProduct(data.product, data.validations, data.ocr_text);
+
+    } catch (err) {
+      setPipeline(['done', '', '', '']);
+      setStatus(`Error: ${err.message}`, 'error');
+      document.getElementById('upload-ocr-btn').disabled = false;
+    }
+  }
+
+  function resetUpload() {
+    uploadedFile = null;
+    detectedBarcode = null;
+    document.getElementById('file-input').value = '';
+    document.getElementById('drop-placeholder').style.display = 'block';
+    document.getElementById('drop-preview').style.display = 'none';
+    document.getElementById('upload-scan-btn').style.display = 'none';
+    document.getElementById('upload-ocr-btn').style.display = 'none';
+    document.getElementById('reset-upload-btn').style.display = 'none';
+    document.getElementById('result-panel').style.display = 'none';
+    setPipeline(['', '', '', '']);
+    document.getElementById('status-area').innerHTML = '';
+  }
+
+  // ── Barcode selector (multiple detected) ──────────────────────────────────
+
+  function showBarcodeSelector(barcodes) {
+    const items = barcodes.map(b => `
+      <div onclick="selectBarcode('${b.value}')"
+           style="display:flex;align-items:center;justify-content:space-between;
+                  padding:12px;background:var(--surface2);border:1px solid var(--border2);
+                  border-radius:10px;cursor:pointer;margin-bottom:8px;transition:all .15s"
+           onmouseover="this.style.borderColor='var(--accent)'"
+           onmouseout="this.style.borderColor='var(--border2)'">
+        <div>
+          <div style="font-size:13px;font-weight:600;font-family:'DM Mono',monospace;
+                      color:var(--accent);margin-bottom:3px">${b.value}</div>
+          <div style="font-size:11px;color:var(--text2)">
+            Type: ${b.type}
+            ${b.in_database
+              ? '<span style="color:var(--accent);margin-left:8px">● In database</span>'
+              : '<span style="color:var(--text3);margin-left:8px">● New product</span>'}
+          </div>
+        </div>
+        <svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:var(--text2);
+             fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round">
+          <polyline points="9 18 15 12 9 6"/>
+        </svg>
+      </div>
+    `).join('');
+
+    document.getElementById('result-card').innerHTML = `
+      <div style="font-size:11px;color:var(--accent2);font-family:'DM Mono',monospace;
+                  margin-bottom:12px">MULTIPLE BARCODES DETECTED</div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:14px">
+        Select the barcode that belongs to this product:
+      </div>
+      ${items}
+      <button class="btn btn-secondary" style="width:100%;margin-top:8px"
+              onclick="resetScan()">Cancel</button>
+    `;
+
+    document.getElementById('save-btn').style.display = 'none';
+    document.getElementById('result-panel').style.display = 'block';
+  }
+
+  async function selectBarcode(barcodeValue) {
+    document.getElementById('result-panel').style.display = 'none';
+    document.getElementById('save-btn').style.display = 'block';
+
+    setPipeline(['done', '', '', '']);
+    setStatus(`Selected: ${barcodeValue}`, 'success');
+    detectedBarcode = barcodeValue;
+    scanning = true;
+
+    const existing = await fetch('/api/lookup/' + barcodeValue);
+    const data = await existing.json();
+
+    if (data.in_database) {
+      setPipeline(['done', 'done', 'done', 'done']);
+      showExistingProduct(data.product);
+    } else {
+      if (currentMode === 'upload' && uploadedFile) {
+        document.getElementById('upload-ocr-btn').style.display = 'block';
+        setStatus(`Barcode selected. Now run OCR to generate description.`, 'success');
+      } else {
+        await runOcrPipeline(barcodeValue);
+      }
+    }
+
+    scanning = false;
+  }
+
+  // ── Result display ─────────────────────────────────────────────────────────
+
   function showExistingProduct(product) {
     document.getElementById('result-card').innerHTML = `
-      <div style="font-size:11px;color:var(--accent);font-family:'DM Mono',monospace;margin-bottom:8px">FOUND IN DATABASE</div>
-      <div style="font-size:17px;font-weight:700;margin-bottom:4px">${product.product_name || 'Unknown'}</div>
-      <div style="font-size:12px;color:var(--accent);font-family:'DM Mono',monospace;margin-bottom:12px">${product.brand || ''}</div>
+      <div style="font-size:11px;color:var(--accent);font-family:'DM Mono',monospace;
+                  margin-bottom:8px">FOUND IN DATABASE</div>
+      <div style="font-size:17px;font-weight:700;margin-bottom:4px">
+        ${product.product_name || 'Unknown'}</div>
+      <div style="font-size:12px;color:var(--accent);font-family:'DM Mono',monospace;
+                  margin-bottom:12px">${product.brand || ''}</div>
       <div class="attr-grid">
-        <div class="attr-item"><div class="attr-label">Barcode</div><div class="attr-val" style="font-size:11px">${product.barcode}</div></div>
-        <div class="attr-item"><div class="attr-label">Type</div><div class="attr-val">${product.product_type || 'N/A'}</div></div>
-        <div class="attr-item"><div class="attr-label">Size</div><div class="attr-val">${product.size || 'N/A'}</div></div>
-        <div class="attr-item"><div class="attr-label">Saved</div><div class="attr-val" style="font-size:11px">${product.timestamp?.slice(0,10) || 'N/A'}</div></div>
+        <div class="attr-item"><div class="attr-label">Barcode</div>
+          <div class="attr-val" style="font-size:11px">${product.barcode}</div></div>
+        <div class="attr-item"><div class="attr-label">Type</div>
+          <div class="attr-val">${product.product_type || 'N/A'}</div></div>
+        <div class="attr-item"><div class="attr-label">Size</div>
+          <div class="attr-val">${product.size || 'N/A'}</div></div>
+        <div class="attr-item"><div class="attr-label">Saved</div>
+          <div class="attr-val" style="font-size:11px">
+            ${product.timestamp?.slice(0,10) || 'N/A'}</div></div>
       </div>
-      ${product.description ? `<div class="ai-desc-card"><div class="ai-badge">Description</div><div class="ai-text">${product.description}</div></div>` : ''}
+      ${product.description
+        ? `<div class="ai-desc-card"><div class="ai-badge">Description</div>
+           <div class="ai-text">${product.description}</div></div>`
+        : ''}
     `;
-    document.getElementById('save-btn').textContent = 'Update';
-    document.getElementById('save-btn').onclick = () => window.location.href = '/review/' + product.barcode;
+    document.getElementById('save-btn').textContent = 'View & Edit';
+    document.getElementById('save-btn').onclick = () =>
+      window.location.href = '/review/' + product.barcode;
     document.getElementById('result-panel').style.display = 'block';
   }
 
   function showNewProduct(product, validations, ocrText) {
     const checks = [
-      { key: 'barcode_format', label: 'Barcode format valid' },
-      { key: 'required_fields', label: 'Required fields present' },
-      { key: 'duplicate_check', label: 'No duplicate record' },
-      { key: 'description_quality', label: 'Description quality' }
+      { key: 'barcode_format',     label: 'Barcode format valid' },
+      { key: 'required_fields',    label: 'Required fields present' },
+      { key: 'duplicate_check',    label: 'No duplicate record' },
+      { key: 'description_quality',label: 'Description quality' }
     ];
 
     const checksHtml = checks.map(c => `
@@ -247,14 +489,21 @@ async function selectBarcode(barcodeValue) {
     `).join('');
 
     document.getElementById('result-card').innerHTML = `
-      <div style="font-size:11px;color:var(--accent2);font-family:'DM Mono',monospace;margin-bottom:8px">NEW PRODUCT</div>
-      <div style="font-size:17px;font-weight:700;margin-bottom:4px">${product.product_name || 'Unknown'}</div>
-      <div style="font-size:12px;color:var(--accent);font-family:'DM Mono',monospace;margin-bottom:12px">${product.brand || ''}</div>
+      <div style="font-size:11px;color:var(--accent2);font-family:'DM Mono',monospace;
+                  margin-bottom:8px">NEW PRODUCT</div>
+      <div style="font-size:17px;font-weight:700;margin-bottom:4px">
+        ${product.product_name || 'Unknown'}</div>
+      <div style="font-size:12px;color:var(--accent);font-family:'DM Mono',monospace;
+                  margin-bottom:12px">${product.brand || ''}</div>
       <div class="attr-grid">
-        <div class="attr-item"><div class="attr-label">Barcode</div><div class="attr-val" style="font-size:11px">${product.barcode}</div></div>
-        <div class="attr-item"><div class="attr-label">Type</div><div class="attr-val">${product.product_type || 'N/A'}</div></div>
-        <div class="attr-item"><div class="attr-label">Size</div><div class="attr-val">${product.size || 'N/A'}</div></div>
-        <div class="attr-item"><div class="attr-label">Source</div><div class="attr-val" style="color:var(--accent2)">OCR + LLM</div></div>
+        <div class="attr-item"><div class="attr-label">Barcode</div>
+          <div class="attr-val" style="font-size:11px">${product.barcode}</div></div>
+        <div class="attr-item"><div class="attr-label">Type</div>
+          <div class="attr-val">${product.product_type || 'N/A'}</div></div>
+        <div class="attr-item"><div class="attr-label">Size</div>
+          <div class="attr-val">${product.size || 'N/A'}</div></div>
+        <div class="attr-item"><div class="attr-label">Source</div>
+          <div class="attr-val" style="color:var(--accent2)">Upload + LLM</div></div>
       </div>
       <div class="ai-desc-card">
         <div class="ai-badge">LLM Generated</div>
@@ -263,6 +512,10 @@ async function selectBarcode(barcodeValue) {
       <div class="val-card">
         <div class="val-title">Validation checks</div>
         ${checksHtml}
+      </div>
+      <div style="font-size:11px;color:var(--text2);margin-top:10px;
+                  font-family:'DM Mono',monospace">
+        OCR: ${ocrText?.slice(0, 100) || ''}${ocrText?.length > 100 ? '...' : ''}
       </div>
     `;
 
@@ -296,9 +549,14 @@ async function selectBarcode(barcodeValue) {
   function resetScan() {
     pendingProduct = null;
     scanning = false;
+    detectedBarcode = null;
     setPipeline(['', '', '', '']);
     document.getElementById('status-area').innerHTML = '';
     document.getElementById('result-panel').style.display = 'none';
+    document.getElementById('save-btn').style.display = 'block';
+    document.getElementById('save-btn').disabled = false;
+    document.getElementById('save-btn').textContent = 'Save to DB';
+    document.getElementById('save-btn').onclick = saveProduct;
   }
 </script>
 {% endblock %}

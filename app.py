@@ -17,6 +17,9 @@ import threading
 import base64
 import numpy as np
 
+from werkzeug.utils import secure_filename
+import base64
+
 app = Flask(__name__, template_folder="ui/templates", static_folder="ui/static")
 
 import os
@@ -91,6 +94,115 @@ def lookup_barcode(barcode):
     """Looks up a single barcode in the database and returns the result."""
     existing = find_product_by_barcode(barcode.strip())
     return jsonify({"in_database": existing is not None, "product": existing})
+
+
+def upload_scan():
+    """
+    Accepts an uploaded image from the web UI,
+    runs barcode detection and returns the result.
+    """
+    if "image" not in request.files:
+        return jsonify({"error": "No image provided"}), 400
+
+    file = request.files["image"]
+    if file.filename == "":
+        return jsonify({"error": "No file selected"}), 400
+
+    img_array = np.frombuffer(file.read(), np.uint8)
+    frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+
+    if frame is None:
+        return jsonify({"error": "Could not decode image"}), 400
+
+    # Try raw frame first then preprocessed
+    results = scan_barcode(frame)
+    if not results:
+        processed = preprocess_for_barcode(frame)
+        results = scan_barcode(processed)
+
+    if not results:
+        return jsonify({"found": False, "message": "No barcode detected in image."})
+
+    if len(results) == 1:
+        barcode_value = results[0]["value"].strip()
+        existing = find_product_by_barcode(barcode_value)
+        return jsonify(
+            {
+                "found": True,
+                "multiple": False,
+                "barcode": barcode_value,
+                "in_database": existing is not None,
+                "product": existing,
+            }
+        )
+
+    # Multiple barcodes found
+    barcodes = []
+    for r in results:
+        value = r["value"].strip()
+        existing = find_product_by_barcode(value)
+        barcodes.append(
+            {"value": value, "type": r["type"], "in_database": existing is not None}
+        )
+
+    return jsonify({"found": True, "multiple": True, "barcodes": barcodes})
+
+
+@app.route("/api/upload_ocr", methods=["POST"])
+def upload_ocr():
+    """
+    Accepts an uploaded image and barcode from the web UI,
+    runs OCR and LLM generation on it.
+    """
+    if "image" not in request.files:
+        return jsonify({"error": "No image provided"}), 400
+
+    file = request.files["image"]
+    barcode = request.form.get("barcode", "")
+
+    img_array = np.frombuffer(file.read(), np.uint8)
+    frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+
+    if frame is None:
+        return jsonify({"success": False, "message": "Could not decode image"}), 400
+
+    ocr_frame = preprocess_for_ocr(frame)
+    ocr_text = extract_text(ocr_frame)
+
+    if not ocr_text or len(ocr_text) < 20:
+        return jsonify(
+            {
+                "success": False,
+                "message": "Not enough text detected. Try a clearer image showing the product front.",
+            }
+        )
+
+    attributes = extract_product_attributes(ocr_text)
+    llm_result = generate_description(barcode, attributes)
+
+    if not llm_result:
+        return jsonify({"success": False, "message": "LLM generation failed."})
+
+    product_data = {
+        "barcode": barcode,
+        "brand": llm_result["brand"],
+        "product_name": llm_result["product_name"],
+        "product_type": llm_result["product_type"],
+        "size": llm_result["size"],
+        "ocr_text": ocr_text,
+        "description": llm_result["description"],
+    }
+
+    validations = run_all_validations(product_data, find_product_by_barcode)
+
+    return jsonify(
+        {
+            "success": True,
+            "product": product_data,
+            "validations": validations,
+            "ocr_text": ocr_text,
+        }
+    )
 
 
 # ── API Endpoints ─────────────────────────────────────────────────────────────
@@ -268,6 +380,88 @@ def video_feed():
     )
 
 
+@app.route("/api/scan_image", methods=["POST"])
+def scan_image():
+    """
+    Accepts an uploaded image from the mobile app,
+    runs barcode detection on it and returns the result.
+    """
+    if "image" not in request.files:
+        return jsonify({"error": "No image provided"}), 400
+
+    file = request.files["image"]
+    img_array = np.frombuffer(file.read(), np.uint8)
+    frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+
+    if frame is None:
+        return jsonify({"error": "Could not decode image"}), 400
+
+    results = scan_barcode(frame)
+    if not results:
+        processed = preprocess_for_barcode(frame)
+        results = scan_barcode(processed)
+
+    if not results:
+        return jsonify({"found": False})
+
+    barcode_value = results[0]["value"].strip()
+    existing = find_product_by_barcode(barcode_value)
+
+    return jsonify(
+        {
+            "found": True,
+            "barcode": barcode_value,
+            "in_database": existing is not None,
+            "product": existing,
+        }
+    )
+
+
+@app.route("/api/ocr_image", methods=["POST"])
+def ocr_image():
+    """
+    Accepts an uploaded image and barcode from the mobile app,
+    runs OCR on the image and sends results to LLM.
+    """
+    if "image" not in request.files:
+        return jsonify({"error": "No image provided"}), 400
+
+    file = request.files["image"]
+    barcode = request.form.get("barcode", "")
+
+    img_array = np.frombuffer(file.read(), np.uint8)
+    frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+
+    if frame is None:
+        return jsonify({"error": "Could not decode image"}), 400
+
+    ocr_frame = preprocess_for_ocr(frame)
+    ocr_text = extract_text(ocr_frame)
+
+    if not ocr_text or len(ocr_text) < 20:
+        return jsonify({"success": False, "message": "Not enough text detected."})
+
+    attributes = extract_product_attributes(ocr_text)
+    llm_result = generate_description(barcode, attributes)
+
+    if not llm_result:
+        return jsonify({"success": False, "message": "LLM generation failed."})
+
+    product_data = {
+        "barcode": barcode,
+        "brand": llm_result["brand"],
+        "product_name": llm_result["product_name"],
+        "product_type": llm_result["product_type"],
+        "size": llm_result["size"],
+        "ocr_text": ocr_text,
+        "description": llm_result["description"],
+    }
+
+    insert_product(product_data)
+
+    return jsonify({"success": True, "product": product_data, "ocr_text": ocr_text})
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 @app.route("/test")
 def test():
@@ -277,4 +471,4 @@ def test():
 if __name__ == "__main__":
     initialize_database()
     print("SmartInventory running at http://127.0.0.1:5000")
-    app.run(debug=True, threaded=True)
+    app.run(host="0.0.0.0", port=5000, debug=True, threaded=True)
