@@ -13,22 +13,39 @@
   </div>
 
   <!-- BARCODE MODE — live camera -->
-  <div id="mode-barcode">
-    <div class="camera-viewport">
-      <img src="/video_feed" id="camera-feed" alt="Camera feed">
-      <div class="scan-overlay">
-        <div class="scan-frame">
-          <div class="corner-tr"></div>
-          <div class="corner-bl"></div>
-          <div class="scan-line" id="scan-line"></div>
-        </div>
-        <div class="scan-label" id="scan-label">Align barcode within frame</div>
+<div id="mode-barcode">
+  <div class="camera-viewport" style="position:relative">
+    <!-- Live feed — shown before capture -->
+    <img src="/video_feed" id="camera-feed" alt="Camera feed"
+         style="width:100%;height:100%;object-fit:cover">
+
+    <!-- Captured frame — shown after scan -->
+    <img id="captured-frame" alt="Captured frame"
+         style="width:100%;height:100%;object-fit:cover;display:none">
+
+    <!-- Scan overlay — only on live feed -->
+    <div class="scan-overlay" id="scan-overlay">
+      <div class="scan-frame">
+        <div class="corner-tr"></div>
+        <div class="corner-bl"></div>
+        <div class="scan-line"></div>
       </div>
+      <div class="scan-label">Align barcode within frame</div>
     </div>
-    <div style="display:flex;justify-content:center;padding:8px 0 16px">
-      <div class="capture-btn" id="capture-btn" onclick="captureFrame()">
-        <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-      </div>
+
+    <!-- Captured label -->
+    <div id="captured-label" style="display:none;position:absolute;
+         bottom:12px;left:50%;transform:translateX(-50%);
+         background:rgba(0,0,0,.7);color:var(--accent);
+         font-size:11px;font-family:'DM Mono',monospace;
+         padding:4px 12px;border-radius:6px;white-space:nowrap">
+      Barcode captured
+    </div>
+  </div>
+
+  <div style="display:flex;justify-content:center;padding:8px 0 16px">
+    <div class="capture-btn" id="capture-btn" onclick="captureFrame()">
+      <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
     </div>
   </div>
 
@@ -170,59 +187,355 @@
 
     document.getElementById('result-panel').style.display = 'none';
     setPipeline(['active', '', '', '']);
-    setStatus('Scanning for barcode...', 'info');
+    setStatus('Capturing frame...', 'info');
 
-    const res = await fetch('/api/capture', { method: 'POST' });
-    const data = await res.json();
+    try {
+        // Step 1 — capture and display the frame
+        const frameRes = await fetch('/api/capture_frame', { method: 'POST' });
+        const frameData = await frameRes.json();
 
-    if (!data.found) {
-      setPipeline(['', '', '', '']);
-      setStatus('No barcode detected. Adjust angle and try again.', 'error');
-      scanning = false;
-      return;
-    }
+        if (frameData.image) {
+            // Show the captured image instead of live feed
+            document.getElementById('camera-feed').style.display = 'none';
+            document.getElementById('scan-overlay').style.display = 'none';
+            const capturedImg = document.getElementById('captured-frame');
+            capturedImg.src = frameData.image;
+            capturedImg.style.display = 'block';
+            document.getElementById('captured-label').style.display = 'block';
+            document.getElementById('captured-label').textContent = 'Scanning barcode...';
+        }
 
-    setPipeline(['done', '', '', '']);
-    setStatus(`Barcode detected: ${data.barcode}`, 'success');
+        // Step 2 — scan for barcode
+        setStatus('Scanning for barcode...', 'info');
+        const res = await fetch('/api/capture', { method: 'POST' });
+        const data = await res.json();
 
-    if (data.multiple) {
-      showBarcodeSelector(data.barcodes);
-      scanning = false;
-      return;
-    }
+        if (!data.found) {
+            setPipeline(['', '', '', '']);
+            setStatus('No barcode detected. Try again.', 'error');
+            restoreLiveFeed();
+            scanning = false;
+            return;
+        }
 
-    if (data.in_database) {
-      setPipeline(['done', 'done', 'done', 'done']);
-      showExistingProduct(data.product);
-    } else {
-      await runOcrPipeline(data.barcode);
+        document.getElementById('captured-label').textContent =
+            `Barcode: ${data.barcode}`;
+        setPipeline(['done', '', '', '']);
+        setStatus(`Barcode detected: ${data.barcode}`, 'success');
+
+        if (data.multiple) {
+            showBarcodeSelector(data.barcodes);
+            scanning = false;
+            return;
+        }
+
+        if (data.in_database) {
+            setPipeline(['done', 'done', 'done', 'done']);
+            showExistingProduct(data.product);
+        } else {
+            await runOcrPipeline(data.barcode);
+        }
+
+    } catch (err) {
+        setStatus(`Error: ${err.message}`, 'error');
+        restoreLiveFeed();
     }
 
     scanning = false;
-  }
+}
 
-  async function runOcrPipeline(barcode) {
+async function runOcrPipeline(barcode) {
+    setPipeline(['done', '', '', '']);
+    setStatus(`Barcode detected: ${barcode}. Choose how to add this product.`, 'info');
+
+    // Step 1 — capture a second frame for OCR display
+    try {
+        const frameRes = await fetch('/api/capture_frame', { method: 'POST' });
+        const frameData = await frameRes.json();
+
+        if (frameData.image) {
+            const capturedImg = document.getElementById('captured-frame');
+            capturedImg.src = frameData.image;
+            capturedImg.style.display = 'block';
+            document.getElementById('captured-label').textContent =
+                'OCR frame captured';
+        }
+    } catch (err) {
+        console.log('Could not capture OCR frame:', err);
+    }
+
+    // Step 2 — show choice card
+    document.getElementById('result-card').innerHTML = `
+      <div style="font-size:11px;color:var(--accent2);font-family:'DM Mono',monospace;
+                  margin-bottom:12px">NEW PRODUCT — ${barcode}</div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:16px;line-height:1.6">
+        This product is not in the database. How would you like to add it?
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <button class="btn btn-primary" onclick="startOcr('${barcode}')">
+          Run OCR + Generate Description
+        </button>
+        <button class="btn btn-secondary" onclick="showManualEntry('${barcode}')">
+          Enter Details Manually
+        </button>
+      </div>
+    `;
+    document.getElementById('save-btn').style.display = 'none';
+    document.getElementById('result-panel').style.display = 'block';
+}
+
+function restoreLiveFeed() {
+    // Switch back to live camera feed
+    document.getElementById('camera-feed').style.display = 'block';
+    document.getElementById('scan-overlay').style.display = 'flex';
+    document.getElementById('captured-frame').style.display = 'none';
+    document.getElementById('captured-label').style.display = 'none';
+}
+
+function resetScan() {
+    pendingProduct = null;
+    scanning = false;
+    detectedBarcode = null;
+    setPipeline(['', '', '', '']);
+    document.getElementById('status-area').innerHTML = '';
+    document.getElementById('result-panel').style.display = 'none';
+    document.getElementById('save-btn').style.display = 'block';
+    document.getElementById('save-btn').disabled = false;
+    document.getElementById('save-btn').textContent = 'Save to DB';
+    document.getElementById('save-btn').onclick = saveProduct;
+    restoreLiveFeed(); // ← restore live feed on reset
+}
+
+async function startOcr(barcode) {
+    document.getElementById('result-panel').style.display = 'none';
+    document.getElementById('save-btn').style.display = 'block';
+
+    // Step 1 — restore live feed and prompt user to take OCR picture
+    restoreLiveFeed();
+    setPipeline(['done', '', '', '']);
+    setStatus('Show the FRONT of the product and press the capture button for OCR.', 'info');
+
+    // Show a temporary OCR capture button overlay message
+    document.getElementById('result-card').innerHTML = `
+      <div style="font-size:11px;color:var(--accent2);font-family:'DM Mono',monospace;
+                  margin-bottom:8px">OCR SCAN — ${barcode}</div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:16px;line-height:1.6">
+        Show the <strong style="color:var(--text)">front of the product</strong> to the
+        camera so the label and brand name are visible, then press the capture button.
+      </div>
+      <button class="btn btn-primary" onclick="captureOcrFrame('${barcode}')">
+        Capture for OCR
+      </button>
+      <button class="btn btn-secondary" style="margin-top:10px"
+              onclick="runOcrPipeline('${barcode}')">
+        Back
+      </button>
+    `;
+    document.getElementById('save-btn').style.display = 'none';
+    document.getElementById('result-panel').style.display = 'block';
+}
+
+async function captureOcrFrame(barcode) {
+    document.getElementById('result-panel').style.display = 'none';
     setPipeline(['done', 'active', '', '']);
-    setStatus('Running OCR on packaging...', 'info');
+    setStatus('Capturing and running OCR...', 'info');
 
-    const res = await fetch('/api/ocr', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ barcode })
+    // Hide live feed immediately
+    document.getElementById('camera-feed').style.display = 'none';
+    document.getElementById('scan-overlay').style.display = 'none';
+    document.getElementById('captured-label').style.display = 'block';
+    document.getElementById('captured-label').textContent = 'Running OCR...';
+
+    try {
+        // Run OCR — the endpoint captures the frame and returns it
+        const res = await fetch('/api/ocr', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ barcode })
+        });
+        const data = await res.json();
+
+        // Display the exact frame that was used for OCR
+        if (data.frame) {
+            const capturedImg = document.getElementById('captured-frame');
+            capturedImg.src = data.frame;
+            capturedImg.style.display = 'block';
+        }
+
+        if (!data.success) {
+            setPipeline(['done', '', '', '']);
+            setStatus(data.message, 'error');
+            document.getElementById('captured-label').textContent = 'OCR failed';
+
+            document.getElementById('result-card').innerHTML = `
+              <div style="font-size:11px;color:var(--accent3);font-family:'DM Mono',monospace;
+                          margin-bottom:8px">OCR FAILED</div>
+              <div style="font-size:13px;color:var(--text2);margin-bottom:16px">
+                ${data.message}
+              </div>
+              <div style="display:flex;flex-direction:column;gap:10px">
+                <button class="btn btn-primary" onclick="startOcr('${barcode}')">
+                  Try Again
+                </button>
+                <button class="btn btn-secondary"
+                        onclick="showManualEntry('${barcode}')">
+                  Enter Details Manually
+                </button>
+              </div>
+            `;
+            document.getElementById('save-btn').style.display = 'none';
+            document.getElementById('result-panel').style.display = 'block';
+            return;
+        }
+
+        // Success
+        document.getElementById('captured-label').textContent = 'OCR complete';
+        setPipeline(['done', 'done', 'done', '']);
+        setStatus('Description generated successfully.', 'success');
+        pendingProduct = data.product;
+        document.getElementById('save-btn').style.display = 'block';
+        showNewProduct(data.product, data.validations, data.ocr_text);
+
+    } catch (err) {
+        setPipeline(['done', '', '', '']);
+        setStatus(`Error: ${err.message}`, 'error');
+    }
+}
+
+function showManualEntry(barcode) {
+    document.getElementById('result-card').innerHTML = `
+      <div style="font-size:11px;color:var(--accent2);font-family:'DM Mono',monospace;
+                  margin-bottom:12px">MANUAL ENTRY — ${barcode}</div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div>
+          <div style="font-size:10px;color:var(--text2);font-family:'DM Mono',monospace;
+                      margin-bottom:4px;text-transform:uppercase;letter-spacing:.8px">Brand</div>
+          <input id="manual-brand" type="text" placeholder="e.g. Celsius"
+                 style="width:100%;background:var(--surface2);border:1px solid var(--border2);
+                        border-radius:8px;padding:10px 12px;color:var(--text);
+                        font-family:'Syne',sans-serif;font-size:13px;outline:none;
+                        box-sizing:border-box">
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--text2);font-family:'DM Mono',monospace;
+                      margin-bottom:4px;text-transform:uppercase;letter-spacing:.8px">Product Name</div>
+          <input id="manual-name" type="text" placeholder="e.g. Sparkling Orange Energy Drink"
+                 style="width:100%;background:var(--surface2);border:1px solid var(--border2);
+                        border-radius:8px;padding:10px 12px;color:var(--text);
+                        font-family:'Syne',sans-serif;font-size:13px;outline:none;
+                        box-sizing:border-box">
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--text2);font-family:'DM Mono',monospace;
+                      margin-bottom:4px;text-transform:uppercase;letter-spacing:.8px">Product Type</div>
+          <input id="manual-type" type="text" placeholder="e.g. Energy Drink"
+                 style="width:100%;background:var(--surface2);border:1px solid var(--border2);
+                        border-radius:8px;padding:10px 12px;color:var(--text);
+                        font-family:'Syne',sans-serif;font-size:13px;outline:none;
+                        box-sizing:border-box">
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--text2);font-family:'DM Mono',monospace;
+                      margin-bottom:4px;text-transform:uppercase;letter-spacing:.8px">Size</div>
+          <input id="manual-size" type="text" placeholder="e.g. 12 fl oz"
+                 style="width:100%;background:var(--surface2);border:1px solid var(--border2);
+                        border-radius:8px;padding:10px 12px;color:var(--text);
+                        font-family:'Syne',sans-serif;font-size:13px;outline:none;
+                        box-sizing:border-box">
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--text2);font-family:'DM Mono',monospace;
+                      margin-bottom:4px;text-transform:uppercase;letter-spacing:.8px">
+            Description (optional)</div>
+          <textarea id="manual-desc" placeholder="Enter a product description..."
+                    rows="3"
+                    style="width:100%;background:var(--surface2);border:1px solid var(--border2);
+                           border-radius:8px;padding:10px 12px;color:var(--text);
+                           font-family:'Syne',sans-serif;font-size:13px;outline:none;
+                           resize:vertical;box-sizing:border-box"></textarea>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px">
+          <button class="btn btn-secondary"
+                  onclick="runOcrPipeline('${barcode}')">
+            Back
+          </button>
+          <button class="btn btn-primary"
+                  onclick="saveManualEntry('${barcode}')">
+            Save Product
+          </button>
+        </div>
+      </div>
+    `;
+    document.getElementById('save-btn').style.display = 'none';
+    document.getElementById('result-panel').style.display = 'block';
+    setPipeline(['done', '', '', '']);
+    setStatus('Fill in the product details below.', 'info');
+}
+
+async function saveManualEntry(barcode) {
+    const brand       = document.getElementById('manual-brand').value.trim();
+    const productName = document.getElementById('manual-name').value.trim();
+    const productType = document.getElementById('manual-type').value.trim();
+    const size        = document.getElementById('manual-size').value.trim();
+    const description = document.getElementById('manual-desc').value.trim();
+
+    if (!brand && !productName) {
+        setStatus('Please enter at least a brand or product name.', 'error');
+        return;
+    }
+
+    const productData = {
+        barcode:      barcode,
+        brand:        brand || null,
+        product_name: productName || null,
+        product_type: productType || null,
+        size:         size || null,
+        ocr_text:     null,
+        description:  description || null
+    };
+
+    setPipeline(['done', 'done', 'done', 'active']);
+    setStatus('Saving product...', 'info');
+
+    const res = await fetch('/api/save_manual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(productData)
     });
     const data = await res.json();
 
-    if (!data.success) {
-      setPipeline(['done', '', '', '']);
-      setStatus(data.message, 'error');
-      return;
+    if (data.success) {
+        setPipeline(['done', 'done', 'done', 'done']);
+        setStatus('Product saved successfully!', 'success');
+        showToast('Product saved!');
+        document.getElementById('result-card').innerHTML = `
+          <div style="font-size:11px;color:var(--accent);font-family:'DM Mono',monospace;
+                      margin-bottom:8px">SAVED SUCCESSFULLY</div>
+          <div style="font-size:17px;font-weight:700;margin-bottom:4px">
+            ${productName || 'Unknown Product'}</div>
+          <div style="font-size:12px;color:var(--accent);font-family:'DM Mono',monospace;
+                      margin-bottom:12px">${brand || ''}</div>
+          <div class="attr-grid">
+            <div class="attr-item"><div class="attr-label">Barcode</div>
+              <div class="attr-val" style="font-size:11px">${barcode}</div></div>
+            <div class="attr-item"><div class="attr-label">Type</div>
+              <div class="attr-val">${productType || 'N/A'}</div></div>
+            <div class="attr-item"><div class="attr-label">Size</div>
+              <div class="attr-val">${size || 'N/A'}</div></div>
+            <div class="attr-item"><div class="attr-label">Source</div>
+              <div class="attr-val" style="color:var(--text2)">Manual</div></div>
+          </div>
+        `;
+        document.getElementById('save-btn').style.display = 'block';
+        document.getElementById('save-btn').textContent = 'View in Inventory';
+        document.getElementById('save-btn').onclick = () =>
+            window.location.href = '/inventory';
+        document.getElementById('result-panel').style.display = 'block';
+    } else {
+        setStatus(data.error || 'Failed to save product.', 'error');
+        setPipeline(['done', 'done', 'done', '']);
     }
-
-    setPipeline(['done', 'done', 'done', '']);
-    setStatus('LLM description generated.', 'success');
-    pendingProduct = data.product;
-    showNewProduct(data.product, data.validations, data.ocr_text);
-  }
+}
 
   // ── Image upload flow ──────────────────────────────────────────────────────
 
@@ -309,8 +622,25 @@
         setPipeline(['done', 'done', 'done', 'done']);
         showExistingProduct(data.product);
       } else {
-        setStatus(`Barcode ${data.barcode} found. Now run OCR to generate description.`, 'success');
-        document.getElementById('upload-ocr-btn').style.display = 'block';
+        detectedBarcode = data.barcode;
+        document.getElementById('result-card').innerHTML = `
+          <div style="font-size:11px;color:var(--accent2);font-family:'DM Mono',monospace;
+                      margin-bottom:12px">NEW PRODUCT — ${data.barcode}</div>
+          <div style="font-size:13px;color:var(--text2);margin-bottom:16px;line-height:1.6">
+            Barcode detected. How would you like to add this product?
+          </div>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <button class="btn btn-primary" onclick="uploadOcr()">
+              Run OCR + Generate Description
+            </button>
+            <button class="btn btn-secondary" onclick="showManualEntry('${data.barcode}')">
+              Enter Details Manually
+            </button>
+          </div>
+        `;
+        document.getElementById('save-btn').style.display = 'none';
+        document.getElementById('result-panel').style.display = 'block';
+        setStatus(`Barcode detected: ${data.barcode}`, 'success');
       }
 
     } catch (err) {

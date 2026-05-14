@@ -17,7 +17,6 @@ import threading
 import base64
 import numpy as np
 
-from werkzeug.utils import secure_filename
 import base64
 
 app = Flask(__name__, template_folder="ui/templates", static_folder="ui/static")
@@ -54,17 +53,16 @@ def release_camera():
 
 @app.route("/")
 def home():
-    return render_template("home.html", total=0, today=0, recent=[])
-    # products = get_all_products()
-    # today_count = sum(
-    #    1
-    #    for p in products
-    #    if p["timestamp"]
-    #    and p["timestamp"].startswith(__import__("datetime").date.today().isoformat())
-    # )
-    # return render_template(
-    #    "home.html", total=len(products), today=today_count, recent=products[:3]
-    # )
+    products = get_all_products()
+    today_count = sum(
+        1
+        for p in products
+        if p["timestamp"]
+        and p["timestamp"].startswith(__import__("datetime").date.today().isoformat())
+    )
+    return render_template(
+        "home.html", total=len(products), today=today_count, recent=products[:3]
+    )
 
 
 @app.route("/scan")
@@ -96,6 +94,7 @@ def lookup_barcode(barcode):
     return jsonify({"in_database": existing is not None, "product": existing})
 
 
+@app.route("/api/upload_scan", methods=["POST"])
 def upload_scan():
     """
     Accepts an uploaded image from the web UI,
@@ -150,10 +149,6 @@ def upload_scan():
 
 @app.route("/api/upload_ocr", methods=["POST"])
 def upload_ocr():
-    """
-    Accepts an uploaded image and barcode from the web UI,
-    runs OCR and LLM generation on it.
-    """
     if "image" not in request.files:
         return jsonify({"error": "No image provided"}), 400
 
@@ -166,14 +161,15 @@ def upload_ocr():
     if frame is None:
         return jsonify({"success": False, "message": "Could not decode image"}), 400
 
-    ocr_frame = preprocess_for_ocr(frame)
-    ocr_text = extract_text(ocr_frame)
+    # Run multiple preprocessing variants
+    ocr_frames = preprocess_for_ocr(frame)
+    ocr_text = extract_text(ocr_frames)
 
     if not ocr_text or len(ocr_text) < 20:
         return jsonify(
             {
                 "success": False,
-                "message": "Not enough text detected. Try a clearer image showing the product front.",
+                "message": "Not enough text detected. Try a clearer image showing the full product front.",
             }
         )
 
@@ -203,6 +199,28 @@ def upload_ocr():
             "ocr_text": ocr_text,
         }
     )
+
+
+@app.route("/api/save_manual", methods=["POST"])
+def save_manual():
+    """Saves a manually entered product record, skipping strict validation."""
+    data = request.json
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+
+    if not data.get("barcode"):
+        return jsonify({"error": "Barcode is required"}), 400
+
+    # Only check for duplicate — skip other validations for manual entry
+    existing = find_product_by_barcode(data["barcode"])
+    if existing:
+        return jsonify({"error": "Product with this barcode already exists"}), 400
+
+    product_id = insert_product(data)
+    if product_id:
+        return jsonify({"success": True, "id": product_id})
+
+    return jsonify({"error": "Failed to save product"}), 500
 
 
 # ── API Endpoints ─────────────────────────────────────────────────────────────
@@ -258,10 +276,6 @@ def capture():
 
 @app.route("/api/ocr", methods=["POST"])
 def run_ocr():
-    """
-    Captures a frame, runs OCR on it, sends results to LLM,
-    and returns the generated product data as JSON.
-    """
     with camera_lock:
         cap = get_camera()
         ret, frame = cap.read()
@@ -271,14 +285,24 @@ def run_ocr():
 
     barcode = request.json.get("barcode", "")
 
-    ocr_frame = preprocess_for_ocr(frame)
-    ocr_text = extract_text(ocr_frame)
+    # Encode the actual frame used for OCR as base64
+    # so the browser can display exactly what was scanned
+    _, buffer = cv2.imencode(".jpg", frame)
+    frame_b64 = base64.b64encode(buffer).decode("utf-8")
+    frame_data_url = f"data:image/jpeg;base64,{frame_b64}"
+
+    # Run preprocessing — returns list of frame variants
+    ocr_frames = preprocess_for_ocr(frame)
+
+    # Run OCR on all variants
+    ocr_text = extract_text(ocr_frames)
 
     if not ocr_text or len(ocr_text) < 20:
         return jsonify(
             {
                 "success": False,
-                "message": "Not enough text detected. Try a different angle.",
+                "message": "Not enough text detected. Try holding the product closer and showing the full front label.",
+                "frame": frame_data_url,
             }
         )
 
@@ -286,7 +310,13 @@ def run_ocr():
     llm_result = generate_description(barcode, attributes)
 
     if not llm_result:
-        return jsonify({"success": False, "message": "LLM generation failed."})
+        return jsonify(
+            {
+                "success": False,
+                "message": "LLM generation failed.",
+                "frame": frame_data_url,
+            }
+        )
 
     product_data = {
         "barcode": barcode,
@@ -306,6 +336,7 @@ def run_ocr():
             "product": product_data,
             "validations": validations,
             "ocr_text": ocr_text,
+            "frame": frame_data_url,
         }
     )
 
@@ -462,6 +493,25 @@ def ocr_image():
     return jsonify({"success": True, "product": product_data, "ocr_text": ocr_text})
 
 
+@app.route("/api/capture_frame", methods=["POST"])
+def capture_frame_image():
+    """
+    Captures the current camera frame and returns it
+    as a base64 encoded JPEG for display in the browser.
+    """
+    with camera_lock:
+        cap = get_camera()
+        ret, frame = cap.read()
+
+    if not ret:
+        return jsonify({"error": "Failed to capture frame"}), 500
+
+    _, buffer = cv2.imencode(".jpg", frame)
+    frame_b64 = base64.b64encode(buffer).decode("utf-8")
+
+    return jsonify({"image": f"data:image/jpeg;base64,{frame_b64}"})
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 @app.route("/test")
 def test():
@@ -471,4 +521,4 @@ def test():
 if __name__ == "__main__":
     initialize_database()
     print("SmartInventory running at http://127.0.0.1:5000")
-    app.run(host="0.0.0.0", port=5000, debug=True, threaded=True)
+    app.run(host="0.0.0.0", port=5000, debug=True, threaded=True, use_reloader=False)

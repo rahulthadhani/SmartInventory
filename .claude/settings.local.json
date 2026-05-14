@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(venv\\\\Scripts\\\\python.exe -c \"from paddleocr import PaddleOCR; import inspect; r=PaddleOCR.__init__.__doc__; print\\(r\\)\")"
+    ]
+  }
+}

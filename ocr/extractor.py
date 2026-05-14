@@ -1,72 +1,50 @@
-import easyocr
+from paddleocr import PaddleOCR
 import re
 
-# Initialize the EasyOCR reader once at module level
-# This avoids reloading the model every time you call extract_text()
-# gpu=False means it runs on CPU — set to True if you have a GPU
-reader = easyocr.Reader(["en"], gpu=False)
+# enable_mkldnn=False avoids a Windows oneDNN incompatibility in PaddleOCR v3.
+# use_textline_orientation handles 0/180 degree text per detected line.
+reader = PaddleOCR(use_textline_orientation=True, lang="en", enable_mkldnn=False)
 
 
-def extract_text(frame):
+def extract_text(frames):
     """
-    Runs EasyOCR on a camera frame and returns all detected text
-    as a single cleaned string.
-
-    EasyOCR returns a list of tuples:
-      (bounding_box, text, confidence_score)
-
-    We only keep results above a confidence threshold of 0.3
-    to filter out low quality detections.
+    Runs PaddleOCR on multiple frame variants.
+    Deduplicates results across all variants.
     """
-    results = reader.readtext(frame)
+    if not isinstance(frames, list):
+        frames = [frames]
 
-    if not results:
-        return ""
+    all_texts = []
+    seen = set()
 
-    # Filter by confidence and extract just the text strings
-    texts = [text for (_, text, confidence) in results if confidence > 0.3]
+    for i, frame in enumerate(frames):
+        try:
+            results = reader.predict(frame)
+            for res in results:
+                texts = res.get("rec_texts", [])
+                scores = res.get("rec_scores", [])
+                for text, confidence in zip(texts, scores):
+                    text_clean = text.strip()
+                    text_lower = text_clean.lower()
+                    if confidence > 0.1 and text_lower not in seen and len(text_clean) > 1:
+                        all_texts.append(text_clean)
+                        seen.add(text_lower)
+        except Exception as e:
+            print(f"OCR error on frame variant {i}: {e}")
+            continue
 
-    # Join all detected text into one string
-    raw_text = " ".join(texts)
-
+    raw_text = " ".join(all_texts)
     return clean_ocr_text(raw_text)
 
 
 def clean_ocr_text(raw_text):
-    """
-    Cleans up raw OCR output by removing noise characters
-    and normalizing whitespace.
-
-    Common OCR artifacts:
-    - Random symbols like |, @, #, ~
-    - Extra spaces and newlines
-    - Very short single character fragments
-    """
-    # Remove characters that are almost never meaningful in product text
     cleaned = re.sub(r"[|@#~^*<>{}[\]\\]", "", raw_text)
-
-    # Collapse multiple spaces into one
     cleaned = re.sub(r"\s+", " ", cleaned)
-
-    # Strip leading and trailing whitespace
     cleaned = cleaned.strip()
-
     return cleaned
 
 
 def extract_product_attributes(ocr_text):
-    """
-    Applies rule-based filtering to identify likely product
-    attributes from raw OCR text.
-
-    Looks for:
-    - Brand/product name: capitalized words or ALL CAPS words
-    - Size: patterns like "12 fl oz", "500ml", "2 lbs"
-    - Keywords: common product type words
-
-    Returns a dict of extracted attributes.
-    These are best-effort guesses — the LLM will interpret them.
-    """
     attributes = {
         "possible_brand": None,
         "possible_size": None,
@@ -74,39 +52,24 @@ def extract_product_attributes(ocr_text):
         "raw_text": ocr_text,
     }
 
-    # Look for size patterns e.g. 12 fl oz, 500ml, 2.5 lbs, 16oz
     size_pattern = re.search(
         r"\d+(\.\d+)?\s*(fl\.?\s*oz|ml|g|kg|lbs?|oz|L|liters?)", ocr_text, re.IGNORECASE
     )
     if size_pattern:
         attributes["possible_size"] = size_pattern.group().strip()
 
-    # Look for ALL CAPS words as likely brand names (min 3 chars)
     caps_words = re.findall(r"\b[A-Z]{3,}\b", ocr_text)
     if caps_words:
         attributes["possible_brand"] = caps_words[0]
 
-    # Collect meaningful keywords (words longer than 3 characters)
-    # that might indicate product type
     stopwords = {
-        "with",
-        "and",
-        "the",
-        "for",
-        "from",
-        "this",
-        "that",
-        "are",
-        "not",
-        "per",
-        "use",
-        "may",
-        "also",
+        "with", "and", "the", "for", "from", "this", "that",
+        "are", "not", "per", "use", "may", "also",
     }
     words = ocr_text.split()
     keywords = [
         w.strip(".,;:") for w in words if len(w) > 3 and w.lower() not in stopwords
     ]
-    attributes["possible_keywords"] = keywords[:10]  # cap at 10
+    attributes["possible_keywords"] = keywords[:10]
 
     return attributes
