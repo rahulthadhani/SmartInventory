@@ -17,9 +17,22 @@
   </div>
   {% else %}
 
+  <!-- Product Header Card -->
   <div class="card">
     <div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:14px">
+
+      <!-- Product Image or Fallback Icon -->
+      {% if product.image_url %}
+      <div style="width:70px;height:70px;border-radius:12px;overflow:hidden;flex-shrink:0;background:var(--surface2);border:1px solid var(--border)">
+        <img src="{{ product.image_url }}"
+             alt="{{ product.product_name }}"
+             style="width:100%;height:100%;object-fit:contain"
+             onerror="this.parentElement.innerHTML='<div style=\'width:70px;height:70px;display:flex;align-items:center;justify-content:center;font-size:28px\'>📦</div>'">
+      </div>
+      {% else %}
       <div style="width:70px;height:70px;background:var(--surface2);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:28px;flex-shrink:0">📦</div>
+      {% endif %}
+
       <div>
         <div style="font-size:17px;font-weight:700;line-height:1.3;margin-bottom:4px">{{ product.product_name or 'Unknown Product' }}</div>
         <div style="font-size:12px;color:var(--accent);font-family:'DM Mono',monospace;font-weight:500">{{ product.brand or 'Unknown Brand' }}</div>
@@ -29,15 +42,31 @@
         </div>
       </div>
     </div>
+
     <div style="border-top:1px solid var(--border);padding-top:12px;display:flex;justify-content:space-between;align-items:center">
       <div>
         <div style="font-size:10px;color:var(--text2);font-family:'DM Mono',monospace;margin-bottom:2px">BARCODE</div>
         <div style="font-size:13px;font-weight:600;font-family:'DM Mono',monospace;color:var(--accent)">{{ product.barcode }}</div>
       </div>
-      <div style="font-size:11px;color:var(--accent);background:#0D2B1A;padding:5px 10px;border-radius:6px">Saved {{ product.timestamp[:10] if product.timestamp else '' }}</div>
+      <div style="font-size:11px;color:var(--accent);background:#0D2B1A;padding:5px 10px;border-radius:6px">
+        Saved {{ product.timestamp[:10] if product.timestamp else '' }}
+      </div>
     </div>
   </div>
 
+  <!-- Product Image Full View (if available) -->
+  {% if product.image_url %}
+  <div class="card" style="text-align:center;padding:20px">
+    <div style="font-size:10px;color:var(--text2);font-family:'DM Mono',monospace;margin-bottom:12px;letter-spacing:0.05em">PRODUCT IMAGE</div>
+    <img src="{{ product.image_url }}"
+         alt="{{ product.product_name }}"
+         style="max-width:240px;max-height:240px;object-fit:contain;border-radius:12px;border:1px solid var(--border)"
+         onerror="this.parentElement.style.display='none'">
+    <div style="font-size:10px;color:var(--text3);margin-top:8px">Found online via web search</div>
+  </div>
+  {% endif %}
+
+  <!-- Attribute Grid -->
   <div class="attr-grid">
     <div class="attr-item"><div class="attr-label">Brand</div><div class="attr-val">{{ product.brand or 'N/A' }}</div></div>
     <div class="attr-item"><div class="attr-label">Size</div><div class="attr-val">{{ product.size or 'N/A' }}</div></div>
@@ -45,6 +74,7 @@
     <div class="attr-item"><div class="attr-label">Source</div><div class="attr-val" style="color:var(--accent2)">OCR + LLM</div></div>
   </div>
 
+  <!-- LLM Description -->
   {% if product.description %}
   <div class="ai-desc-card">
     <div class="ai-badge">LLM Generated</div>
@@ -52,6 +82,7 @@
   </div>
   {% endif %}
 
+  <!-- Validation Checks -->
   {% if validations %}
   <div class="val-card">
     <div class="val-title">Validation checks</div>
@@ -72,19 +103,29 @@
     <div style="display:flex;flex-direction:column;gap:10px">
       <div>
         <div class="attr-label" style="margin-bottom:4px">Brand</div>
-        <input id="edit-brand" value="{{ product.brand or '' }}" style="width:100%;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;padding:10px 12px;color:var(--text);font-family:'Syne',sans-serif;font-size:13px;outline:none">
+        <input id="edit-brand" value="{{ product.brand or '' }}"
+               style="width:100%;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;padding:10px 12px;color:var(--text);font-family:'Syne',sans-serif;font-size:13px;outline:none">
       </div>
       <div>
         <div class="attr-label" style="margin-bottom:4px">Product Name</div>
-        <input id="edit-name" value="{{ product.product_name or '' }}" style="width:100%;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;padding:10px 12px;color:var(--text);font-family:'Syne',sans-serif;font-size:13px;outline:none">
+        <input id="edit-name" value="{{ product.product_name or '' }}"
+               style="width:100%;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;padding:10px 12px;color:var(--text);font-family:'Syne',sans-serif;font-size:13px;outline:none">
       </div>
       <div>
         <div class="attr-label" style="margin-bottom:4px">Product Type</div>
-        <input id="edit-type" value="{{ product.product_type or '' }}" style="width:100%;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;padding:10px 12px;color:var(--text);font-family:'Syne',sans-serif;font-size:13px;outline:none">
+        <input id="edit-type" value="{{ product.product_type or '' }}"
+               style="width:100%;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;padding:10px 12px;color:var(--text);font-family:'Syne',sans-serif;font-size:13px;outline:none">
       </div>
       <div>
         <div class="attr-label" style="margin-bottom:4px">Size</div>
-        <input id="edit-size" value="{{ product.size or '' }}" style="width:100%;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;padding:10px 12px;color:var(--text);font-family:'Syne',sans-serif;font-size:13px;outline:none">
+        <input id="edit-size" value="{{ product.size or '' }}"
+               style="width:100%;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;padding:10px 12px;color:var(--text);font-family:'Syne',sans-serif;font-size:13px;outline:none">
+      </div>
+      <div>
+        <div class="attr-label" style="margin-bottom:4px">Image URL</div>
+        <input id="edit-image-url" value="{{ product.image_url or '' }}"
+               placeholder="https://example.com/product.jpg"
+               style="width:100%;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;padding:10px 12px;color:var(--text);font-family:'DM Mono',monospace;font-size:11px;outline:none">
       </div>
     </div>
     <div class="btn-row" style="margin-top:16px">
@@ -99,16 +140,17 @@
 <script>
   async function saveEdits() {
     const updated = {
-      brand: document.getElementById('edit-brand').value.trim(),
+      brand:        document.getElementById('edit-brand').value.trim(),
       product_name: document.getElementById('edit-name').value.trim(),
       product_type: document.getElementById('edit-type').value.trim(),
-      size: document.getElementById('edit-size').value.trim()
+      size:         document.getElementById('edit-size').value.trim(),
+      image_url:    document.getElementById('edit-image-url').value.trim() || null
     };
 
     const res = await fetch('/api/update/{{ product.barcode }}', {
-      method: 'POST',
+      method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updated)
+      body:    JSON.stringify(updated)
     });
 
     const data = await res.json();

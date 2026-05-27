@@ -1,124 +1,125 @@
-from openai import OpenAI
+import openai
+import json
+import re
 from config import OPENAI_API_KEY, OPENAI_MODEL
 
-client = OpenAI(api_key=OPENAI_API_KEY)
-
-
-def build_prompt(barcode, attributes):
-    """
-    Builds the prompt sent to the LLM.
-    The LLM is instructed to use web search to verify and correct
-    product information before generating the description.
-    """
-    ocr_text = attributes.get("raw_text", "")
-    possible_brand = attributes.get("possible_brand", "Unknown")
-    possible_size = attributes.get("possible_size", "Unknown")
-    keywords = ", ".join(attributes.get("possible_keywords", []))
-
-    prompt = f"""You are a product catalog assistant with access to web search.
-
-A product was scanned and the following information was extracted from its packaging 
-using OCR. OCR text is often noisy and may contain errors — for example brand names 
-may be misspelled or garbled.
-
-Your job is to:
-1. Use the barcode and OCR text to search the web and identify the real product
-2. Correct any OCR errors in the brand name, product name, and other fields
-3. Use the verified real product information to fill in the fields accurately
-4. Generate a short, accurate catalog description based on verified information
-
-Barcode: {barcode}
-Possible brand (from OCR, may contain errors): {possible_brand}
-Possible size (from OCR): {possible_size}
-Keywords found on packaging: {keywords}
-Full OCR text from packaging (may contain errors): {ocr_text}
-
-Search for this product using the barcode and OCR keywords to find the correct 
-product details. Correct any OCR errors you find.
-
-Respond in exactly this format:
-Brand: <verified brand name>
-Product Name: <verified product name>
-Product Type: <verified product type/category>
-Size: <verified size or Unknown>
-Description: <2-3 sentence catalog description using verified information>"""
-
-    return prompt
+client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
 
 def generate_description(barcode, attributes):
     """
-    Sends product attributes to the OpenAI API with web search enabled.
-    The LLM will search the web to verify and correct OCR errors before
-    generating the description.
-
-    Returns a dict with keys:
-      brand, product_name, product_type, size, description
-
-    Returns None if the API call fails.
+    Generates a structured product description using GPT-4o-mini with web search.
+    Returns a dict with brand, product_name, product_type, size, and description.
     """
-    prompt = build_prompt(barcode, attributes)
+    raw_text = attributes.get("raw_text", "")
+    possible_brand = attributes.get("possible_brand", "Unknown")
+    possible_size = attributes.get("possible_size", "")
+    keywords = " ".join(attributes.get("possible_keywords", []))
+
+    prompt = f"""You are a product catalog assistant. Based on the following information extracted from a product label, generate accurate product details.
+
+Barcode: {barcode}
+Raw OCR text: {raw_text}
+Possible brand: {possible_brand}
+Possible size: {possible_size}
+Keywords: {keywords}
+
+Search the web to verify and correct any OCR errors. Return ONLY a valid JSON object with no extra text:
+
+{{
+  "brand": "exact brand name",
+  "product_name": "full product name",
+  "product_type": "category like Beverage, Snack, Electronics, etc",
+  "size": "size or weight",
+  "description": "2-3 sentence product description"
+}}"""
 
     try:
-        response = client.responses.create(
-            model="gpt-4o-mini",
-            tools=[{"type": "web_search_preview"}],
-            input=prompt,
+        response = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            max_tokens=1000,
+            messages=[{"role": "user", "content": prompt}],
+            tools=[{"type": "web_search_preview"}]
         )
 
-        # Extract the text output from the response
-        raw_response = ""
-        for item in response.output:
-            if hasattr(item, "content"):
-                for block in item.content:
-                    if hasattr(block, "text"):
-                        raw_response += block.text
+        content = response.choices[0].message.content
+        if not content:
+            for block in response.choices[0].message.tool_calls or []:
+                if hasattr(block, "function"):
+                    content = block.function.arguments
+                    break
 
-        raw_response = raw_response.strip()
-
-        if not raw_response:
-            print("LLM returned empty response.")
+        if not content:
             return None
 
-        print(f"\nLLM raw response:\n{raw_response}\n")
-        return parse_llm_response(raw_response)
+        clean = re.sub(r"```json|```", "", content).strip()
+        return json.loads(clean)
 
+    except json.JSONDecodeError:
+        return None
     except Exception as e:
-        print(f"LLM API error: {e}")
+        print(f"LLM generation error: {e}")
         return None
 
 
-def parse_llm_response(raw_response):
+def find_product_image(product_name, brand, barcode):
     """
-    Parses the structured LLM response into a dictionary.
-
-    Expected format:
-      Brand: PowerA
-      Product Name: ADVANTAGE Wired Controller for Xbox
-      Product Type: Gaming Controller
-      Size: Unknown
-      Description: The PowerA ADVANTAGE Wired Controller...
-
-    Returns a dict with those five keys.
-    Falls back to "Unknown" for any field that couldn't be parsed.
+    Uses GPT-4o-mini with web search to find a publicly accessible
+    product image URL for the given product.
+    Returns a URL string or None if not found.
     """
-    result = {
-        "brand": "Unknown",
-        "product_name": "Unknown",
-        "product_type": "Unknown",
-        "size": "Unknown",
-        "description": "Unknown",
-    }
+    prompt = f"""Search the web for a product image of:
+Product: {product_name}
+Brand: {brand}
+Barcode: {barcode}
 
-    lines = raw_response.strip().split("\n")
-    for line in lines:
-        if ":" not in line:
-            continue
-        key, _, value = line.partition(":")
-        key = key.strip().lower().replace(" ", "_")
-        value = value.strip()
+Find a direct image URL (ending in .jpg, .jpeg, .png, or .webp) from a 
+reputable source like the brand's official website, Amazon, Walmart, 
+Target, or a major retailer.
 
-        if key in result:
-            result[key] = value
+Return ONLY a JSON object with no extra text:
+{{
+  "image_url": "https://example.com/product-image.jpg",
+  "source": "amazon.com"
+}}
 
-    return result
+If no image is found return:
+{{
+  "image_url": null,
+  "source": null
+}}"""
+
+    try:
+        response = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            max_tokens=500,
+            messages=[{"role": "user", "content": prompt}],
+            tools=[{"type": "web_search_preview"}]
+        )
+
+        content = response.choices[0].message.content
+        if not content:
+            return None
+
+        clean = re.sub(r"```json|```", "", content).strip()
+        result = json.loads(clean)
+        image_url = result.get("image_url")
+
+        if image_url and _is_valid_image_url(image_url):
+            print(f"Found product image: {image_url}")
+            return image_url
+
+        return None
+
+    except Exception as e:
+        print(f"Image search error: {e}")
+        return None
+
+
+def _is_valid_image_url(url):
+    """Basic check that the URL looks like a direct image link."""
+    if not url or not url.startswith("http"):
+        return False
+    lower = url.lower()
+    return any(lower.endswith(ext) for ext in
+               [".jpg", ".jpeg", ".png", ".webp", ".gif"])
